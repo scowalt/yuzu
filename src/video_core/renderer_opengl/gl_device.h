@@ -52,6 +52,10 @@ public:
         return max_varyings;
     }
 
+    u32 GetMaxComputeSharedMemorySize() const {
+        return max_compute_shared_memory_size;
+    }
+
     bool HasWarpIntrinsics() const {
         return has_warp_intrinsics;
     }
@@ -104,6 +108,10 @@ public:
         return use_assembly_shaders;
     }
 
+    bool UseAsynchronousShaders() const {
+        return use_asynchronous_shaders;
+    }
+
 private:
     static bool TestVariableAoffi();
     static bool TestPreciseBug();
@@ -114,6 +122,7 @@ private:
     std::size_t shader_storage_alignment{};
     u32 max_vertex_attributes{};
     u32 max_varyings{};
+    u32 max_compute_shared_memory_size{};
     bool has_warp_intrinsics{};
     bool has_shader_ballot{};
     bool has_vertex_viewport_layer{};
@@ -127,6 +136,7 @@ private:
     bool has_fast_buffer_sub_data{};
     bool has_nv_viewport_array2{};
     bool use_assembly_shaders{};
+    bool use_asynchronous_shaders{};
 };
 
 } // namespace OpenGL

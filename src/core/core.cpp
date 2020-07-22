@@ -43,6 +43,7 @@
 #include "core/loader/loader.h"
 #include "core/memory.h"
 #include "core/memory/cheat_engine.h"
+#include "core/network/network.h"
 #include "core/perf_stats.h"
 #include "core/reporter.h"
 #include "core/settings.h"
@@ -147,8 +148,8 @@ struct System::Impl {
 
         device_memory = std::make_unique<Core::DeviceMemory>(system);
 
-        is_multicore = Settings::values.use_multi_core;
-        is_async_gpu = is_multicore || Settings::values.use_asynchronous_gpu_emulation;
+        is_multicore = Settings::values.use_multi_core.GetValue();
+        is_async_gpu = is_multicore || Settings::values.use_asynchronous_gpu_emulation.GetValue();
 
         kernel.SetMulticore(is_multicore);
         cpu_manager.SetMulticore(is_multicore);
@@ -162,7 +163,7 @@ struct System::Impl {
         const auto current_time = std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch());
         Settings::values.custom_rtc_differential =
-            Settings::values.custom_rtc.value_or(current_time) - current_time;
+            Settings::values.custom_rtc.GetValue().value_or(current_time) - current_time;
 
         // Create a default fs if one doesn't already exist.
         if (virtual_filesystem == nullptr)
@@ -393,6 +394,9 @@ struct System::Impl {
 
     /// Telemetry session for this emulation session
     std::unique_ptr<Core::TelemetrySession> telemetry_session;
+
+    /// Network instance
+    Network::NetworkInstance network_instance;
 
     ResultStatus status = ResultStatus::Success;
     std::string status_details = "";

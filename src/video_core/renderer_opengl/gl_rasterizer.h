@@ -33,6 +33,7 @@
 #include "video_core/renderer_opengl/gl_state_tracker.h"
 #include "video_core/renderer_opengl/gl_texture_cache.h"
 #include "video_core/renderer_opengl/utils.h"
+#include "video_core/shader/async_shaders.h"
 #include "video_core/textures/texture.h"
 
 namespace Core {
@@ -91,6 +92,14 @@ public:
         return num_queued_commands > 0;
     }
 
+    VideoCommon::Shader::AsyncShaders& GetAsyncShaders() {
+        return async_shaders;
+    }
+
+    const VideoCommon::Shader::AsyncShaders& GetAsyncShaders() const {
+        return async_shaders;
+    }
+
 private:
     /// Configures the color and depth framebuffer states.
     void ConfigureFramebuffers();
@@ -115,9 +124,9 @@ private:
     /// Configures the current global memory entries to use for the kernel invocation.
     void SetupComputeGlobalMemory(Shader* kernel);
 
-    /// Configures a constant buffer.
+    /// Configures a global memory buffer.
     void SetupGlobalMemory(u32 binding, const GlobalMemoryEntry& entry, GPUVAddr gpu_addr,
-                           std::size_t size);
+                           std::size_t size, GLuint64EXT* pointer);
 
     /// Configures the current textures to use for the draw command.
     void SetupDrawTextures(std::size_t stage_index, Shader* shader);
@@ -242,6 +251,7 @@ private:
     ScreenInfo& screen_info;
     ProgramManager& program_manager;
     StateTracker& state_tracker;
+    VideoCommon::Shader::AsyncShaders async_shaders;
 
     static constexpr std::size_t STREAM_BUFFER_SIZE = 128 * 1024 * 1024;
 

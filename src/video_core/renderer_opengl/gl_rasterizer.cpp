@@ -139,6 +139,18 @@ void oglEnable(GLenum cap, bool state) {
     (state ? glEnable : glDisable)(cap);
 }
 
+void UpdateBindlessPointers(GLenum target, GLuint64EXT* pointers, std::size_t num_entries) {
+    if (num_entries == 0) {
+        return;
+    }
+    if (num_entries % 2 == 1) {
+        pointers[num_entries] = 0;
+    }
+    const GLsizei num_vectors = static_cast<GLsizei>((num_entries + 1) / 2);
+    glProgramLocalParametersI4uivNV(target, 0, num_vectors,
+                                    reinterpret_cast<const GLuint*>(pointers));
+}
+
 } // Anonymous namespace
 
 RasterizerOpenGL::RasterizerOpenGL(Core::System& system, Core::Frontend::EmuWindow& emu_window,
@@ -149,7 +161,8 @@ RasterizerOpenGL::RasterizerOpenGL(Core::System& system, Core::Frontend::EmuWind
       shader_cache{*this, system, emu_window, device}, query_cache{system, *this},
       buffer_cache{*this, system, device, STREAM_BUFFER_SIZE},
       fence_manager{system, *this, texture_cache, buffer_cache, query_cache}, system{system},
-      screen_info{info}, program_manager{program_manager}, state_tracker{state_tracker} {
+      screen_info{info}, program_manager{program_manager}, state_tracker{state_tracker},
+      async_shaders{emu_window} {
     CheckExtensions();
 
     unified_uniform_buffer.Create();
@@ -161,6 +174,23 @@ RasterizerOpenGL::RasterizerOpenGL(Core::System& system, Core::Frontend::EmuWind
             glNamedBufferStorage(cbuf, static_cast<GLsizeiptr>(Maxwell::MaxConstBufferSize),
                                  nullptr, 0);
         }
+    }
+
+    if (device.UseAsynchronousShaders()) {
+        // Max worker threads we should allow
+        constexpr auto MAX_THREADS = 2u;
+        // Amount of threads we should reserve for other parts of yuzu
+        constexpr auto RESERVED_THREADS = 6u;
+        // Get the amount of threads we can use(this can return zero)
+        const auto cpu_thread_count =
+            std::max(RESERVED_THREADS, std::thread::hardware_concurrency());
+        // Deduce how many "extra" threads we have to use.
+        const auto max_threads_unused = cpu_thread_count - RESERVED_THREADS;
+        // Always allow at least 1 thread regardless of our settings
+        const auto max_worker_count = std::max(1u, max_threads_unused);
+        // Don't use more than MAX_THREADS
+        const auto worker_count = std::min(max_worker_count, MAX_THREADS);
+        async_shaders.AllocateWorkers(worker_count);
     }
 }
 
@@ -306,7 +336,6 @@ GLintptr RasterizerOpenGL::SetupIndexBuffer() {
 void RasterizerOpenGL::SetupShaders(GLenum primitive_mode) {
     MICROPROFILE_SCOPE(OpenGL_Shader);
     auto& gpu = system.GPU().Maxwell3D();
-    std::size_t num_ssbos = 0;
     u32 clip_distances = 0;
 
     for (std::size_t index = 0; index < Maxwell::MaxShaderProgram; ++index) {
@@ -329,31 +358,15 @@ void RasterizerOpenGL::SetupShaders(GLenum primitive_mode) {
         }
 
         // Currently this stages are not supported in the OpenGL backend.
-        // Todo(Blinkhawk): Port tesselation shaders from Vulkan to OpenGL
-        if (program == Maxwell::ShaderProgram::TesselationControl) {
-            continue;
-        } else if (program == Maxwell::ShaderProgram::TesselationEval) {
+        // TODO(Blinkhawk): Port tesselation shaders from Vulkan to OpenGL
+        if (program == Maxwell::ShaderProgram::TesselationControl ||
+            program == Maxwell::ShaderProgram::TesselationEval) {
             continue;
         }
 
-        Shader* const shader = shader_cache.GetStageProgram(program);
+        Shader* const shader = shader_cache.GetStageProgram(program, async_shaders);
 
-        if (device.UseAssemblyShaders()) {
-            // Check for ARB limitation. We only have 16 SSBOs per context state. To workaround this
-            // all stages share the same bindings.
-            const std::size_t num_stage_ssbos = shader->GetEntries().global_memory_entries.size();
-            ASSERT_MSG(num_stage_ssbos == 0 || num_ssbos == 0, "SSBOs on more than one stage");
-            num_ssbos += num_stage_ssbos;
-        }
-
-        // Stage indices are 0 - 5
-        const std::size_t stage = index == 0 ? 0 : index - 1;
-        SetupDrawConstBuffers(stage, shader);
-        SetupDrawGlobalMemory(stage, shader);
-        SetupDrawTextures(stage, shader);
-        SetupDrawImages(stage, shader);
-
-        const GLuint program_handle = shader->GetHandle();
+        const GLuint program_handle = shader->IsBuilt() ? shader->GetHandle() : 0;
         switch (program) {
         case Maxwell::ShaderProgram::VertexA:
         case Maxwell::ShaderProgram::VertexB:
@@ -369,6 +382,13 @@ void RasterizerOpenGL::SetupShaders(GLenum primitive_mode) {
             UNIMPLEMENTED_MSG("Unimplemented shader index={}, enable={}, offset=0x{:08X}", index,
                               shader_config.enable.Value(), shader_config.offset);
         }
+
+        // Stage indices are 0 - 5
+        const std::size_t stage = index == 0 ? 0 : index - 1;
+        SetupDrawConstBuffers(stage, shader);
+        SetupDrawGlobalMemory(stage, shader);
+        SetupDrawTextures(stage, shader);
+        SetupDrawImages(stage, shader);
 
         // Workaround for Intel drivers.
         // When a clip distance is enabled but not set in the shader it crops parts of the screen
@@ -731,6 +751,8 @@ void RasterizerOpenGL::DispatchCompute(GPUVAddr code_addr) {
     current_cbuf = 0;
 
     auto kernel = shader_cache.GetComputeKernel(code_addr);
+    program_manager.BindCompute(kernel->GetHandle());
+
     SetupComputeTextures(kernel);
     SetupComputeImages(kernel);
 
@@ -745,7 +767,6 @@ void RasterizerOpenGL::DispatchCompute(GPUVAddr code_addr) {
     buffer_cache.Unmap();
 
     const auto& launch_desc = system.GPU().KeplerCompute().launch_description;
-    program_manager.BindCompute(kernel->GetHandle());
     glDispatchCompute(launch_desc.grid_dim_x, launch_desc.grid_dim_y, launch_desc.grid_dim_z);
     ++num_queued_commands;
 }
@@ -1005,40 +1026,66 @@ void RasterizerOpenGL::SetupConstBuffer(GLenum stage, u32 binding,
 }
 
 void RasterizerOpenGL::SetupDrawGlobalMemory(std::size_t stage_index, Shader* shader) {
+    static constexpr std::array TARGET_LUT = {
+        GL_VERTEX_PROGRAM_NV,   GL_TESS_CONTROL_PROGRAM_NV, GL_TESS_EVALUATION_PROGRAM_NV,
+        GL_GEOMETRY_PROGRAM_NV, GL_FRAGMENT_PROGRAM_NV,
+    };
+
     auto& gpu{system.GPU()};
     auto& memory_manager{gpu.MemoryManager()};
-    const auto cbufs{gpu.Maxwell3D().state.shader_stages[stage_index]};
+    const auto& cbufs{gpu.Maxwell3D().state.shader_stages[stage_index]};
+    const auto& entries{shader->GetEntries().global_memory_entries};
 
-    u32 binding =
-        device.UseAssemblyShaders() ? 0 : device.GetBaseBindings(stage_index).shader_storage_buffer;
-    for (const auto& entry : shader->GetEntries().global_memory_entries) {
+    std::array<GLuint64EXT, 32> pointers;
+    ASSERT(entries.size() < pointers.size());
+
+    const bool assembly_shaders = device.UseAssemblyShaders();
+    u32 binding = assembly_shaders ? 0 : device.GetBaseBindings(stage_index).shader_storage_buffer;
+    for (const auto& entry : entries) {
         const GPUVAddr addr{cbufs.const_buffers[entry.cbuf_index].address + entry.cbuf_offset};
         const GPUVAddr gpu_addr{memory_manager.Read<u64>(addr)};
         const u32 size{memory_manager.Read<u32>(addr + 8)};
-        SetupGlobalMemory(binding++, entry, gpu_addr, size);
+        SetupGlobalMemory(binding, entry, gpu_addr, size, &pointers[binding]);
+        ++binding;
+    }
+    if (assembly_shaders) {
+        UpdateBindlessPointers(TARGET_LUT[stage_index], pointers.data(), entries.size());
     }
 }
 
 void RasterizerOpenGL::SetupComputeGlobalMemory(Shader* kernel) {
     auto& gpu{system.GPU()};
     auto& memory_manager{gpu.MemoryManager()};
-    const auto cbufs{gpu.KeplerCompute().launch_description.const_buffer_config};
+    const auto& cbufs{gpu.KeplerCompute().launch_description.const_buffer_config};
+    const auto& entries{kernel->GetEntries().global_memory_entries};
+
+    std::array<GLuint64EXT, 32> pointers;
+    ASSERT(entries.size() < pointers.size());
 
     u32 binding = 0;
-    for (const auto& entry : kernel->GetEntries().global_memory_entries) {
-        const auto addr{cbufs[entry.cbuf_index].Address() + entry.cbuf_offset};
-        const auto gpu_addr{memory_manager.Read<u64>(addr)};
-        const auto size{memory_manager.Read<u32>(addr + 8)};
-        SetupGlobalMemory(binding++, entry, gpu_addr, size);
+    for (const auto& entry : entries) {
+        const GPUVAddr addr{cbufs[entry.cbuf_index].Address() + entry.cbuf_offset};
+        const GPUVAddr gpu_addr{memory_manager.Read<u64>(addr)};
+        const u32 size{memory_manager.Read<u32>(addr + 8)};
+        SetupGlobalMemory(binding, entry, gpu_addr, size, &pointers[binding]);
+        ++binding;
+    }
+    if (device.UseAssemblyShaders()) {
+        UpdateBindlessPointers(GL_COMPUTE_PROGRAM_NV, pointers.data(), entries.size());
     }
 }
 
 void RasterizerOpenGL::SetupGlobalMemory(u32 binding, const GlobalMemoryEntry& entry,
-                                         GPUVAddr gpu_addr, std::size_t size) {
-    const auto alignment{device.GetShaderStorageBufferAlignment()};
+                                         GPUVAddr gpu_addr, std::size_t size,
+                                         GLuint64EXT* pointer) {
+    const std::size_t alignment{device.GetShaderStorageBufferAlignment()};
     const auto info = buffer_cache.UploadMemory(gpu_addr, size, alignment, entry.is_written);
-    glBindBufferRange(GL_SHADER_STORAGE_BUFFER, binding, info.handle, info.offset,
-                      static_cast<GLsizeiptr>(size));
+    if (device.UseAssemblyShaders()) {
+        *pointer = info.address + info.offset;
+    } else {
+        glBindBufferRange(GL_SHADER_STORAGE_BUFFER, binding, info.handle, info.offset,
+                          static_cast<GLsizeiptr>(size));
+    }
 }
 
 void RasterizerOpenGL::SetupDrawTextures(std::size_t stage_index, Shader* shader) {

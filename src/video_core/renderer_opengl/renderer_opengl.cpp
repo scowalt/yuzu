@@ -455,8 +455,8 @@ void RendererOpenGL::LoadColorToActiveGLTexture(u8 color_r, u8 color_g, u8 color
 void RendererOpenGL::InitOpenGLObjects() {
     frame_mailbox = std::make_unique<FrameMailbox>();
 
-    glClearColor(Settings::values.bg_red, Settings::values.bg_green, Settings::values.bg_blue,
-                 0.0f);
+    glClearColor(Settings::values.bg_red.GetValue(), Settings::values.bg_green.GetValue(),
+                 Settings::values.bg_blue.GetValue(), 0.0f);
 
     // Create shader programs
     OGLShader vertex_shader;
@@ -535,12 +535,12 @@ void RendererOpenGL::ConfigureFramebufferTexture(TextureInfo& texture,
 
     GLint internal_format;
     switch (framebuffer.pixel_format) {
-    case Tegra::FramebufferConfig::PixelFormat::ABGR8:
+    case Tegra::FramebufferConfig::PixelFormat::A8B8G8R8_UNORM:
         internal_format = GL_RGBA8;
         texture.gl_format = GL_RGBA;
         texture.gl_type = GL_UNSIGNED_INT_8_8_8_8_REV;
         break;
-    case Tegra::FramebufferConfig::PixelFormat::RGB565:
+    case Tegra::FramebufferConfig::PixelFormat::RGB565_UNORM:
         internal_format = GL_RGB565;
         texture.gl_format = GL_RGB;
         texture.gl_type = GL_UNSIGNED_SHORT_5_6_5;
@@ -561,8 +561,8 @@ void RendererOpenGL::ConfigureFramebufferTexture(TextureInfo& texture,
 void RendererOpenGL::DrawScreen(const Layout::FramebufferLayout& layout) {
     if (renderer_settings.set_background_color) {
         // Update background color before drawing
-        glClearColor(Settings::values.bg_red, Settings::values.bg_green, Settings::values.bg_blue,
-                     0.0f);
+        glClearColor(Settings::values.bg_red.GetValue(), Settings::values.bg_green.GetValue(),
+                     Settings::values.bg_blue.GetValue(), 0.0f);
     }
 
     // Set projection matrix

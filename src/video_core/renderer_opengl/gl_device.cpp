@@ -212,6 +212,7 @@ Device::Device()
     shader_storage_alignment = GetInteger<std::size_t>(GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT);
     max_vertex_attributes = GetInteger<u32>(GL_MAX_VERTEX_ATTRIBS);
     max_varyings = GetInteger<u32>(GL_MAX_VARYING_VECTORS);
+    max_compute_shared_memory_size = GetInteger<u32>(GL_MAX_COMPUTE_SHARED_MEMORY_SIZE);
     has_warp_intrinsics = GLAD_GL_NV_gpu_shader5 && GLAD_GL_NV_shader_thread_group &&
                           GLAD_GL_NV_shader_thread_shuffle;
     has_shader_ballot = GLAD_GL_ARB_shader_ballot;
@@ -229,15 +230,17 @@ Device::Device()
     // uniform buffers as "push constants"
     has_fast_buffer_sub_data = is_nvidia && !disable_fast_buffer_sub_data;
 
-    use_assembly_shaders = Settings::values.use_assembly_shaders && GLAD_GL_NV_gpu_program5 &&
-                           GLAD_GL_NV_compute_program5 && GLAD_GL_NV_transform_feedback &&
-                           GLAD_GL_NV_transform_feedback2;
+    use_assembly_shaders = Settings::values.use_assembly_shaders.GetValue() &&
+                           GLAD_GL_NV_gpu_program5 && GLAD_GL_NV_compute_program5 &&
+                           GLAD_GL_NV_transform_feedback && GLAD_GL_NV_transform_feedback2;
+
+    use_asynchronous_shaders = Settings::values.use_asynchronous_shaders.GetValue();
 
     LOG_INFO(Render_OpenGL, "Renderer_VariableAOFFI: {}", has_variable_aoffi);
     LOG_INFO(Render_OpenGL, "Renderer_ComponentIndexingBug: {}", has_component_indexing_bug);
     LOG_INFO(Render_OpenGL, "Renderer_PreciseBug: {}", has_precise_bug);
 
-    if (Settings::values.use_assembly_shaders && !use_assembly_shaders) {
+    if (Settings::values.use_assembly_shaders.GetValue() && !use_assembly_shaders) {
         LOG_ERROR(Render_OpenGL, "Assembly shaders enabled but not supported");
     }
 }
@@ -248,6 +251,7 @@ Device::Device(std::nullptr_t) {
     shader_storage_alignment = 4;
     max_vertex_attributes = 16;
     max_varyings = 15;
+    max_compute_shared_memory_size = 0x10000;
     has_warp_intrinsics = true;
     has_shader_ballot = true;
     has_vertex_viewport_layer = true;

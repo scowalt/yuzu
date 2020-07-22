@@ -122,6 +122,11 @@ public:
         return properties.limits.maxPushConstantsSize;
     }
 
+    /// Returns the maximum size for shared memory.
+    u32 GetMaxComputeSharedMemorySize() const {
+        return properties.limits.maxComputeSharedMemorySize;
+    }
+
     /// Returns true if ASTC is natively supported.
     bool IsOptimalAstcSupported() const {
         return is_optimal_astc_supported;
@@ -182,6 +187,11 @@ public:
         return ext_custom_border_color;
     }
 
+    /// Returns true if the device supports VK_EXT_extended_dynamic_state.
+    bool IsExtExtendedDynamicStateSupported() const {
+        return ext_extended_dynamic_state;
+    }
+
     /// Returns the vendor name reported from Vulkan.
     std::string_view GetVendorName() const {
         return vendor_name;
@@ -239,6 +249,7 @@ private:
     bool ext_shader_viewport_index_layer{};    ///< Support for VK_EXT_shader_viewport_index_layer.
     bool ext_transform_feedback{};             ///< Support for VK_EXT_transform_feedback.
     bool ext_custom_border_color{};            ///< Support for VK_EXT_custom_border_color.
+    bool ext_extended_dynamic_state{};         ///< Support for VK_EXT_extended_dynamic_state.
     bool nv_device_diagnostics_config{};       ///< Support for VK_NV_device_diagnostics_config.
 
     // Telemetry parameters

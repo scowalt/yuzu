@@ -83,12 +83,12 @@ SurfaceParams SurfaceParams::CreateForTexture(const FormatLookupTable& lookup_ta
     params.type = GetFormatType(params.pixel_format);
     if (entry.is_shadow && params.type == SurfaceType::ColorTexture) {
         switch (params.pixel_format) {
-        case PixelFormat::R16U:
-        case PixelFormat::R16F:
-            params.pixel_format = PixelFormat::Z16;
+        case PixelFormat::R16_UNORM:
+        case PixelFormat::R16_FLOAT:
+            params.pixel_format = PixelFormat::D16_UNORM;
             break;
-        case PixelFormat::R32F:
-            params.pixel_format = PixelFormat::Z32F;
+        case PixelFormat::R32_FLOAT:
+            params.pixel_format = PixelFormat::D32_FLOAT;
             break;
         default:
             UNIMPLEMENTED_MSG("Unimplemented shadow convert format: {}",
@@ -195,8 +195,8 @@ SurfaceParams SurfaceParams::CreateForFramebuffer(Core::System& system, std::siz
     SurfaceParams params;
     params.is_tiled =
         config.memory_layout.type == Tegra::Engines::Maxwell3D::Regs::InvMemoryLayout::BlockLinear;
-    params.srgb_conversion = config.format == Tegra::RenderTargetFormat::BGRA8_SRGB ||
-                             config.format == Tegra::RenderTargetFormat::RGBA8_SRGB;
+    params.srgb_conversion = config.format == Tegra::RenderTargetFormat::B8G8R8A8_SRGB ||
+                             config.format == Tegra::RenderTargetFormat::A8B8G8R8_SRGB;
     params.block_width = config.memory_layout.block_width;
     params.block_height = config.memory_layout.block_height;
     params.block_depth = config.memory_layout.block_depth;
@@ -235,8 +235,8 @@ SurfaceParams SurfaceParams::CreateForFermiCopySurface(
     const Tegra::Engines::Fermi2D::Regs::Surface& config) {
     SurfaceParams params{};
     params.is_tiled = !config.linear;
-    params.srgb_conversion = config.format == Tegra::RenderTargetFormat::BGRA8_SRGB ||
-                             config.format == Tegra::RenderTargetFormat::RGBA8_SRGB;
+    params.srgb_conversion = config.format == Tegra::RenderTargetFormat::B8G8R8A8_SRGB ||
+                             config.format == Tegra::RenderTargetFormat::A8B8G8R8_SRGB;
     params.block_width = params.is_tiled ? std::min(config.BlockWidth(), 5U) : 0,
     params.block_height = params.is_tiled ? std::min(config.BlockHeight(), 5U) : 0,
     params.block_depth = params.is_tiled ? std::min(config.BlockDepth(), 5U) : 0,
@@ -343,8 +343,7 @@ std::size_t SurfaceParams::GetLayerSize(bool as_host_size, bool uncompressed) co
         size += GetInnerMipmapMemorySize(level, as_host_size, uncompressed);
     }
     if (is_tiled && is_layered) {
-        return Common::AlignBits(size,
-                                 Tegra::Texture::GetGOBSizeShift() + block_height + block_depth);
+        return Common::AlignBits(size, Tegra::Texture::GOB_SIZE_SHIFT + block_height + block_depth);
     }
     return size;
 }
@@ -418,7 +417,7 @@ std::tuple<u32, u32, u32> SurfaceParams::GetBlockOffsetXYZ(u32 offset) const {
     const u32 block_size = GetBlockSize();
     const u32 block_index = offset / block_size;
     const u32 gob_offset = offset % block_size;
-    const u32 gob_index = gob_offset / static_cast<u32>(Tegra::Texture::GetGOBSize());
+    const u32 gob_index = gob_offset / static_cast<u32>(Tegra::Texture::GOB_SIZE);
     const u32 x_gob_pixels = 64U / GetBytesPerPixel();
     const u32 x_block_pixels = x_gob_pixels << block_width;
     const u32 y_block_pixels = 8U << block_height;
